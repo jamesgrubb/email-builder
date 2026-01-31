@@ -87,15 +87,18 @@ export default function EmailBuilder() {
         activeIndexRef.current = activeImageIndex;
     }, [activeImageIndex]);
 
-    // Track unsaved changes
+    // Track unsaved changes and auto-save
     useEffect(() => {
         setHasUnsavedChanges(code !== originalCodeRef.current);
 
-        // Auto-save logic
-        if (code !== originalCodeRef.current && currentTemplateId) {
+        // Auto-save logic - only if no compile errors
+        if (code !== originalCodeRef.current && currentTemplateId && compileErrors.length === 0) {
             if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
             autoSaveTimerRef.current = setTimeout(() => {
-                handleSave(true); // true = isAutoSave
+                // Double-check no errors at save time
+                if (compileErrors.length === 0) {
+                    handleSave(true); // true = isAutoSave
+                }
             }, 3000); // 3 second debounce
         }
 
@@ -103,7 +106,7 @@ export default function EmailBuilder() {
             if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [code, currentTemplateId]);
+    }, [code, currentTemplateId, compileErrors.length]);
 
     // Load custom brands on mount
     useEffect(() => {
@@ -420,7 +423,13 @@ export default function EmailBuilder() {
                                 Saving...
                             </span>
                         )}
-                        {hasUnsavedChanges && !isAutoSaving && (
+                        {compileErrors.length > 0 && !isAutoSaving && (
+                            <span className="flex items-center gap-1 text-red-400 text-xs font-medium bg-red-400/10 px-1.5 py-0.5 rounded border border-red-400/20 max-w-xs truncate" title={compileErrors.map(e => e.message).join('; ')}>
+                                <AlertCircle size={12} />
+                                {compileErrors[0].message}
+                            </span>
+                        )}
+                        {hasUnsavedChanges && !isAutoSaving && compileErrors.length === 0 && (
                             <span className="flex items-center gap-1 text-yellow-400 text-xs font-medium bg-yellow-400/10 px-1.5 py-0.5 rounded border border-yellow-400/20">
                                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
                                 Unsaved
@@ -431,20 +440,25 @@ export default function EmailBuilder() {
                     {/* Save Button relocated here */}
                     <button
                         onClick={() => handleSave(false)}
-                        disabled={isSaving}
+                        disabled={isSaving || compileErrors.length > 0}
                         className={`flex items-center gap-2 ml-2 px-3 py-1 rounded font-medium text-xs transition-all ${isSaving
                             ? 'bg-green-800/50 text-green-300 cursor-wait'
-                            : hasUnsavedChanges
-                                ? 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-900/20 animate-pulse'
-                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                            : compileErrors.length > 0
+                                ? 'bg-red-800/50 text-red-300 cursor-not-allowed'
+                                : hasUnsavedChanges
+                                    ? 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-900/20 animate-pulse'
+                                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                             }`}
+                        title={compileErrors.length > 0 ? 'Fix MJML errors before saving' : ''}
                     >
                         {isSaving ? (
                             <Loader2 size={12} className="animate-spin" />
+                        ) : compileErrors.length > 0 ? (
+                            <AlertCircle size={12} />
                         ) : (
                             <Save size={12} />
                         )}
-                        {isSaving ? 'Saving...' : 'Save'}
+                        {isSaving ? 'Saving...' : compileErrors.length > 0 ? 'Has Errors' : 'Save'}
                     </button>
                 </div>
 
