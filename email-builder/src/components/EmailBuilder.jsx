@@ -128,6 +128,52 @@ export default function EmailBuilder() {
         fetchBrands();
     }, []);
 
+    // Load template from URL on mount
+    useEffect(() => {
+        const loadFromUrl = async () => {
+            const params = new URLSearchParams(window.location.search);
+            const templateId = params.get('template');
+            const brandId = params.get('brand');
+
+            if (brandId) {
+                setSelectedBrand(brandId);
+            }
+
+            if (templateId) {
+                const { data } = await supabase
+                    .from('templates')
+                    .select('*')
+                    .eq('id', templateId)
+                    .single();
+
+                if (data) {
+                    setCode(data.mjml_code);
+                    setCurrentTemplateId(data.id);
+                    setCurrentTemplateName(data.name);
+                    originalCodeRef.current = data.mjml_code;
+                    if (data.brand_id) {
+                        setSelectedBrand(data.brand_id);
+                    }
+                }
+            }
+        };
+
+        loadFromUrl();
+    }, []);
+
+    // Update URL when brand changes (for non-template brand switches)
+    useEffect(() => {
+        if (!currentTemplateId) {
+            const url = new URL(window.location);
+            if (selectedBrand && selectedBrand !== 'default') {
+                url.searchParams.set('brand', selectedBrand);
+            } else {
+                url.searchParams.delete('brand');
+            }
+            window.history.replaceState({}, '', url);
+        }
+    }, [selectedBrand, currentTemplateId]);
+
     // Cloudinary Widget Initialization
     useEffect(() => {
         if (window.cloudinary) {
@@ -269,6 +315,11 @@ export default function EmailBuilder() {
         setCurrentTemplateId(null);
         setCurrentTemplateName('New Template');
         originalCodeRef.current = DEFAULT_CODE;
+
+        // Update URL
+        const url = new URL(window.location);
+        url.searchParams.delete('template');
+        window.history.pushState({}, '', url);
     };
 
     const handleLoadTemplate = (template) => {
@@ -285,6 +336,16 @@ export default function EmailBuilder() {
         setCurrentTemplateId(template.id);
         setCurrentTemplateName(template.name);
         originalCodeRef.current = template.mjml_code;
+
+        // Update URL
+        const url = new URL(window.location);
+        url.searchParams.set('template', template.id);
+        if (template.brand_id) {
+            url.searchParams.set('brand', template.brand_id);
+        } else {
+            url.searchParams.delete('brand');
+        }
+        window.history.pushState({}, '', url);
     };
 
     const handleSave = async (isAutoSave = false) => {
@@ -336,6 +397,16 @@ export default function EmailBuilder() {
                 if (error) throw error;
                 setCurrentTemplateId(data.id);
                 setCurrentTemplateName(data.name);
+
+                // Update URL for new template
+                const url = new URL(window.location);
+                url.searchParams.set('template', data.id);
+                if (brandId) {
+                    url.searchParams.set('brand', brandId);
+                } else {
+                    url.searchParams.delete('brand');
+                }
+                window.history.pushState({}, '', url);
             }
 
             originalCodeRef.current = code;
