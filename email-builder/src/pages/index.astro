@@ -1,0 +1,8 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import EmailBuilder from '../components/EmailBuilder.jsx';
+---
+
+<BaseLayout title="Email Builder">
+	<EmailBuilder client:only="react" />
+</BaseLayout>
