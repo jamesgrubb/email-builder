@@ -12,8 +12,10 @@ import {
     AlertCircle,
     Pencil,
     Check,
-    X
+    X,
+    Loader2
 } from 'lucide-react';
+import Toast from './Toast';
 
 // PRESET BRANDS
 const PRESET_BRANDS = {
@@ -51,6 +53,7 @@ export default function EmailBuilder() {
     const [preview, setPreview] = useState('');
     const [selectedBrand, setSelectedBrand] = useState('default');
     const [isSaving, setIsSaving] = useState(false);
+    const [isAutoSaving, setIsAutoSaving] = useState(false);
     const [compileErrors, setCompileErrors] = useState([]);
     const [savedBrandNames, setSavedBrandNames] = useState([]);
     const [savedBrandsFull, setSavedBrandsFull] = useState([]);
@@ -68,6 +71,10 @@ export default function EmailBuilder() {
     // Cloudinary state
     const [activeImageIndex, setActiveImageIndex] = useState(null);
 
+    // Toast & Auto-save state
+    const [toast, setToast] = useState({ message: '', type: 'info' });
+    const autoSaveTimerRef = useRef(null);
+
     // Refs
     const editorRef = useRef(null);
     const originalCodeRef = useRef(DEFAULT_CODE);
@@ -83,7 +90,20 @@ export default function EmailBuilder() {
     // Track unsaved changes
     useEffect(() => {
         setHasUnsavedChanges(code !== originalCodeRef.current);
-    }, [code]);
+
+        // Auto-save logic
+        if (code !== originalCodeRef.current && currentTemplateId) {
+            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+            autoSaveTimerRef.current = setTimeout(() => {
+                handleSave(true); // true = isAutoSave
+            }, 3000); // 3 second debounce
+        }
+
+        return () => {
+            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [code, currentTemplateId]);
 
     // Load custom brands on mount
     useEffect(() => {
@@ -264,8 +284,18 @@ export default function EmailBuilder() {
         originalCodeRef.current = template.mjml_code;
     };
 
-    const handleSave = async () => {
+    const handleSave = async (isAutoSave = false) => {
+        // Clear auto-save timer if manual save is triggered
+        if (!isAutoSave && autoSaveTimerRef.current) {
+            clearTimeout(autoSaveTimerRef.current);
+            autoSaveTimerRef.current = null;
+        }
+
         setIsSaving(true);
+        if (isAutoSave) {
+            setIsAutoSaving(true);
+        }
+
         try {
             const isPreset = !!PRESET_BRANDS[selectedBrand];
             const brandId = isPreset ? null : selectedBrand;
@@ -286,6 +316,13 @@ export default function EmailBuilder() {
                     t.id === currentTemplateId ? { ...t, mjml_code: code, brand_id: brandId } : t
                 ));
             } else {
+                // Auto-save shouldn't prompt for a name if it's a new template
+                if (isAutoSave) {
+                    setIsSaving(false);
+                    setIsAutoSaving(false);
+                    return;
+                }
+
                 // Create new
                 const name = prompt('Template name:', 'Untitled Template') || 'Untitled Template';
                 const { data, error } = await supabase
@@ -300,10 +337,25 @@ export default function EmailBuilder() {
 
             originalCodeRef.current = code;
             setHasUnsavedChanges(false);
+
+            // Show appropriate toast message
+            if (isAutoSave) {
+                setToast({ message: 'Auto-saved', type: 'info' });
+            } else {
+                setToast({ message: 'Template saved!', type: 'success' });
+            }
         } catch (error) {
-            alert('Error saving: ' + error.message);
+            console.error('Save error:', error);
+            if (!isAutoSave) {
+                setToast({ message: 'Error saving: ' + error.message, type: 'error' });
+            } else {
+                setToast({ message: 'Auto-save failed', type: 'error' });
+            }
         } finally {
             setIsSaving(false);
+            if (isAutoSave) {
+                setIsAutoSaving(false);
+            }
         }
     };
 
@@ -360,10 +412,40 @@ export default function EmailBuilder() {
                 <div className="flex items-center gap-4">
                     <h1 className="text-lg font-bold text-white">MJML Builder</h1>
                     <span className="text-gray-400">|</span>
-                    <span className="text-sm text-gray-300">
+                    <span className="text-sm text-gray-300 flex items-center gap-2">
                         {currentTemplateName}
-                        {hasUnsavedChanges && <span className="text-yellow-400 ml-1">*</span>}
+                        {isAutoSaving && (
+                            <span className="flex items-center gap-1 text-blue-400 text-xs font-medium bg-blue-400/10 px-1.5 py-0.5 rounded border border-blue-400/20">
+                                <Loader2 size={12} className="animate-spin" />
+                                Saving...
+                            </span>
+                        )}
+                        {hasUnsavedChanges && !isAutoSaving && (
+                            <span className="flex items-center gap-1 text-yellow-400 text-xs font-medium bg-yellow-400/10 px-1.5 py-0.5 rounded border border-yellow-400/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
+                                Unsaved
+                            </span>
+                        )}
                     </span>
+
+                    {/* Save Button relocated here */}
+                    <button
+                        onClick={() => handleSave(false)}
+                        disabled={isSaving}
+                        className={`flex items-center gap-2 ml-2 px-3 py-1 rounded font-medium text-xs transition-all ${isSaving
+                            ? 'bg-green-800/50 text-green-300 cursor-wait'
+                            : hasUnsavedChanges
+                                ? 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-900/20 animate-pulse'
+                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                            }`}
+                    >
+                        {isSaving ? (
+                            <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                            <Save size={12} />
+                        )}
+                        {isSaving ? 'Saving...' : 'Save'}
+                    </button>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -386,27 +468,12 @@ export default function EmailBuilder() {
                                 </optgroup>
                             )}
                         </select>
-                        <ChevronDown size={14} className="text-gray-400" />
                     </div>
-
-                    {/* Save Button */}
-                    <button
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className={`flex items-center gap-2 px-4 py-1.5 rounded font-medium text-sm transition ${isSaving
-                            ? 'bg-green-800 cursor-wait'
-                            : 'bg-green-600 hover:bg-green-500'
-                            }`}
-                    >
-                        <Save size={16} />
-                        {isSaving ? 'Saving...' : 'Save'}
-                    </button>
                 </div>
             </header>
 
             {/* MAIN CONTENT */}
             <div className="flex flex-1 overflow-hidden">
-
                 {/* LEFT SIDEBAR - Templates */}
                 <aside className="w-56 border-r border-gray-700 bg-gray-850 flex flex-col">
                     <div className="p-3 border-b border-gray-700">
@@ -508,10 +575,10 @@ export default function EmailBuilder() {
                             Manage Brands
                         </a>
                     </div>
-                </aside>
+                </aside >
 
                 {/* CENTER - Code Editor */}
-                <div className="flex-1 border-r border-gray-700">
+                < div className="flex-1 border-r border-gray-700" >
                     <Editor
                         height="100%"
                         defaultLanguage="xml"
@@ -557,27 +624,29 @@ export default function EmailBuilder() {
                             automaticLayout: true
                         }}
                     />
-                </div>
+                </div >
 
                 {/* RIGHT - Preview */}
-                <div className="flex-1 bg-gray-100 relative">
+                < div className="flex-1 bg-gray-100 relative" >
                     <div className="absolute top-2 left-2 bg-white/90 text-gray-600 text-xs px-2 py-1 rounded shadow z-10">
                         Preview
                     </div>
 
-                    {compileErrors.length > 0 && (
-                        <div className="absolute bottom-0 left-0 right-0 bg-red-100 text-red-800 p-2 text-xs max-h-24 overflow-y-auto z-20 border-t border-red-200">
-                            <div className="flex items-center gap-1 font-medium mb-1">
-                                <AlertCircle size={12} />
-                                Validation Errors
+                    {
+                        compileErrors.length > 0 && (
+                            <div className="absolute bottom-0 left-0 right-0 bg-red-100 text-red-800 p-2 text-xs max-h-24 overflow-y-auto z-20 border-t border-red-200">
+                                <div className="flex items-center gap-1 font-medium mb-1">
+                                    <AlertCircle size={12} />
+                                    Validation Errors
+                                </div>
+                                <ul className="list-disc pl-4">
+                                    {compileErrors.map((err, i) => (
+                                        <li key={i}>{err.message}</li>
+                                    ))}
+                                </ul>
                             </div>
-                            <ul className="list-disc pl-4">
-                                {compileErrors.map((err, i) => (
-                                    <li key={i}>{err.message}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
+                        )
+                    }
 
                     <iframe
                         title="Preview"
@@ -585,8 +654,14 @@ export default function EmailBuilder() {
                         className="w-full h-full border-none"
                         sandbox="allow-scripts"
                     />
-                </div>
-            </div>
-        </div>
+                </div >
+            </div >
+
+            <Toast
+                message={toast.message}
+                type={toast.type}
+                onDismiss={() => setToast({ message: '', type: 'info' })}
+            />
+        </div >
     );
 }
