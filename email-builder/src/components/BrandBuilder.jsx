@@ -3,6 +3,7 @@ import mjml2html from 'mjml-browser';
 import { supabase } from '../lib/supabase';
 import { ArrowLeft, Palette, Pencil, Trash2, Plus, Save } from 'lucide-react';
 import Toast from './Toast';
+import ConfirmDialog from './ConfirmDialog';
 
 const DEFAULT_BRAND = {
     name: 'My New Brand',
@@ -21,6 +22,7 @@ export default function BrandBuilder() {
     const [isLoading, setIsLoading] = useState(true);
     const [editingBrandId, setEditingBrandId] = useState(null);
     const [toast, setToast] = useState({ message: '', type: 'info' });
+    const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', message: '', confirmLabel: 'Delete', variant: 'danger', onConfirm: null });
 
     // Load saved brands on mount
     useEffect(() => {
@@ -137,21 +139,29 @@ export default function BrandBuilder() {
         setEditingBrandId(brandToEdit.id);
     };
 
-    const handleDeleteBrand = async (brandId) => {
-        if (!confirm('Are you sure you want to delete this brand?')) return;
-
-        try {
-            const { error } = await supabase.from('brands').delete().eq('id', brandId);
-            if (error) throw error;
-            if (editingBrandId === brandId) {
-                setEditingBrandId(null);
-                setBrand(DEFAULT_BRAND);
+    const handleDeleteBrand = (brandId) => {
+        setConfirmDialog({
+            open: true,
+            title: 'Delete brand?',
+            message: 'This brand will be removed. Templates using it will keep their saved styling.',
+            confirmLabel: 'Delete',
+            variant: 'danger',
+            onConfirm: async () => {
+                setConfirmDialog((p) => ({ ...p, open: false }));
+                try {
+                    const { error } = await supabase.from('brands').delete().eq('id', brandId);
+                    if (error) throw error;
+                    if (editingBrandId === brandId) {
+                        setEditingBrandId(null);
+                        setBrand(DEFAULT_BRAND);
+                    }
+                    setToast({ message: 'Brand deleted', type: 'success' });
+                    fetchBrands();
+                } catch (error) {
+                    setToast({ message: 'Error deleting brand: ' + error.message, type: 'error' });
+                }
             }
-            setToast({ message: 'Brand deleted', type: 'success' });
-            fetchBrands();
-        } catch (error) {
-            setToast({ message: 'Error deleting brand: ' + error.message, type: 'error' });
-        }
+        });
     };
 
     const handleCancelEdit = () => {
@@ -385,6 +395,16 @@ export default function BrandBuilder() {
                 message={toast.message}
                 type={toast.type}
                 onDismiss={() => setToast({ message: '', type: 'info' })}
+            />
+
+            <ConfirmDialog
+                open={confirmDialog.open}
+                title={confirmDialog.title}
+                message={confirmDialog.message}
+                confirmLabel={confirmDialog.confirmLabel}
+                variant={confirmDialog.variant}
+                onConfirm={() => confirmDialog.onConfirm?.()}
+                onCancel={() => setConfirmDialog((p) => ({ ...p, open: false }))}
             />
         </div>
     );

@@ -18,6 +18,8 @@ import {
     Undo2
 } from 'lucide-react';
 import Toast from './Toast';
+import ConfirmDialog from './ConfirmDialog';
+import NameModal from './NameModal';
 import UserModeToolbar from './UserModeToolbar';
 import FloatingToolbar from './FloatingToolbar';
 import InlineTextEditor from './InlineTextEditor';
@@ -126,6 +128,10 @@ export default function EmailBuilder() {
     // Empty state: hide editor/preview until user starts creating (when no saved templates)
     const [hasStartedCreating, setHasStartedCreating] = useState(false);
     const showEmptyState = !isUserMode && savedTemplates.length === 0 && !hasStartedCreating;
+
+    // Dialogs (replaces alert/confirm/prompt)
+    const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', message: '', confirmLabel: 'Confirm', variant: 'default', onConfirm: null });
+    const [nameModal, setNameModal] = useState({ open: false, title: '', defaultValue: 'Untitled Template', confirmLabel: 'Save', onConfirm: null, onCancel: null });
 
     // Refs
     const editorRef = useRef(null);
@@ -524,8 +530,7 @@ export default function EmailBuilder() {
         setToast({ message: 'Changes undone', type: 'info' });
     };
 
-    const handleNewTemplate = () => {
-        if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+    const doNewTemplate = (opts = {}) => {
         if (savedTemplates.length === 0) setHasStartedCreating(true);
         codeHistoryRef.current = [];
         setCanUndo(false);
@@ -533,145 +538,229 @@ export default function EmailBuilder() {
         setCurrentTemplateId(null);
         setCurrentTemplateName('New Template');
         originalCodeRef.current = DEFAULT_CODE;
-
-        // Update URL
         const url = new URL(window.location);
         url.searchParams.delete('template');
         window.history.pushState({}, '', url);
+        if (opts.silent !== true) {
+            setToast({ message: 'New template started. Name and save it when ready.', type: 'info' });
+        }
     };
 
-    const handleLoadTemplate = (template) => {
-        if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+    const handleFirstTimeCreate = () => {
+        setNameModal({
+            open: true,
+            title: 'Name your first template',
+            defaultValue: 'My First Template',
+            confirmLabel: 'Create',
+            onConfirm: async (name) => {
+                setNameModal((p) => ({ ...p, open: false }));
+                setHasStartedCreating(true);
+                setCode(DEFAULT_CODE);
+                codeHistoryRef.current = [];
+                setCanUndo(false);
+                originalCodeRef.current = DEFAULT_CODE;
+                setIsSaving(true);
+                try {
+                    await doCreateTemplate(name.trim() || 'My First Template', DEFAULT_CODE);
+                    setHasUnsavedChanges(false);
+                    setToast({ message: 'Template created! Start editing below.', type: 'success' });
+                } catch (error) {
+                    console.error('Create error:', error);
+                    setToast({ message: 'Error creating template: ' + error.message, type: 'error' });
+                    doNewTemplate();
+                } finally {
+                    setIsSaving(false);
+                }
+            },
+            onCancel: () => setNameModal((p) => ({ ...p, open: false }))
+        });
+    };
 
+    const openNewTemplateNameModal = () => {
+        setNameModal({
+            open: true,
+            title: 'Name your new template',
+            defaultValue: 'Untitled Template',
+            confirmLabel: 'Create',
+            onConfirm: async (name) => {
+                setNameModal((p) => ({ ...p, open: false }));
+                setCode(DEFAULT_CODE);
+                codeHistoryRef.current = [];
+                setCanUndo(false);
+                originalCodeRef.current = DEFAULT_CODE;
+                setIsSaving(true);
+                try {
+                    await doCreateTemplate(name.trim() || 'Untitled Template', DEFAULT_CODE);
+                    setHasUnsavedChanges(false);
+                    setToast({ message: 'Template created!', type: 'success' });
+                } catch (error) {
+                    console.error('Create error:', error);
+                    setToast({ message: 'Error creating template: ' + error.message, type: 'error' });
+                    doNewTemplate({ silent: true });
+                } finally {
+                    setIsSaving(false);
+                }
+            },
+            onCancel: () => setNameModal((p) => ({ ...p, open: false }))
+        });
+    };
+
+    const handleNewTemplate = () => {
+        if (hasUnsavedChanges) {
+            setConfirmDialog({
+                open: true,
+                title: 'Discard changes?',
+                message: 'You have unsaved changes. Discard them and create a new template?',
+                confirmLabel: 'Discard',
+                variant: 'danger',
+                onConfirm: () => {
+                    setConfirmDialog((p) => ({ ...p, open: false }));
+                    doNewTemplate({ silent: true });
+                    openNewTemplateNameModal();
+                }
+            });
+        } else {
+            openNewTemplateNameModal();
+        }
+    };
+
+    const doLoadTemplate = (template) => {
         codeHistoryRef.current = [];
         setCanUndo(false);
-
-        // Sync Brand selection with template's brand
-        if (template.brand_id) {
-            setSelectedBrand(template.brand_id);
-        } else {
-            setSelectedBrand('default');
-        }
-
+        if (template.brand_id) setSelectedBrand(template.brand_id);
+        else setSelectedBrand('default');
         setCode(template.mjml_code);
         setCurrentTemplateId(template.id);
         setCurrentTemplateName(template.name);
         originalCodeRef.current = template.mjml_code;
-
-        // Update URL
         const url = new URL(window.location);
         url.searchParams.set('template', template.id);
-        if (template.brand_id) {
-            url.searchParams.set('brand', template.brand_id);
+        if (template.brand_id) url.searchParams.set('brand', template.brand_id);
+        else url.searchParams.delete('brand');
+        window.history.pushState({}, '', url);
+    };
+
+    const handleLoadTemplate = (template) => {
+        if (hasUnsavedChanges) {
+            setConfirmDialog({
+                open: true,
+                title: 'Discard changes?',
+                message: 'You have unsaved changes. Discard them and load this template?',
+                confirmLabel: 'Discard',
+                variant: 'danger',
+                onConfirm: () => {
+                    setConfirmDialog((p) => ({ ...p, open: false }));
+                    doLoadTemplate(template);
+                }
+            });
         } else {
-            url.searchParams.delete('brand');
+            doLoadTemplate(template);
         }
+    };
+
+    const doCreateTemplate = async (name, mjmlCode = code) => {
+        const isPreset = !!PRESET_BRANDS[selectedBrand];
+        let brandId = isPreset ? null : selectedBrand;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (brandId && !uuidRegex.test(brandId)) brandId = null;
+
+        const { data, error } = await supabase
+            .from('templates')
+            .insert([{ mjml_code: mjmlCode, brand_id: brandId, name }])
+            .select()
+            .single();
+        if (error) throw error;
+        setCurrentTemplateId(data.id);
+        setCurrentTemplateName(data.name);
+        setSavedTemplates((prev) => [{ ...data, brand_id: brandId }, ...prev]);
+        const url = new URL(window.location);
+        url.searchParams.set('template', data.id);
+        if (brandId) url.searchParams.set('brand', brandId);
+        else url.searchParams.delete('brand');
         window.history.pushState({}, '', url);
     };
 
     const handleSave = async (isAutoSave = false) => {
-        // Clear auto-save timer if manual save is triggered
         if (!isAutoSave && autoSaveTimerRef.current) {
             clearTimeout(autoSaveTimerRef.current);
             autoSaveTimerRef.current = null;
         }
 
-        setIsSaving(true);
-        if (isAutoSave) {
-            setIsAutoSaving(true);
-        }
+        const isPreset = !!PRESET_BRANDS[selectedBrand];
+        let brandId = isPreset ? null : selectedBrand;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (brandId && !uuidRegex.test(brandId)) brandId = null;
 
-        try {
-            const isPreset = !!PRESET_BRANDS[selectedBrand];
-            let brandId = isPreset ? null : selectedBrand;
-
-            // Validate brandId is a valid UUID or null
-            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            if (brandId && !uuidRegex.test(brandId)) {
-                console.warn('Invalid brand ID, using null:', brandId);
-                brandId = null;
-            }
-
-            if (currentTemplateId) {
-                // Update existing
+        if (currentTemplateId) {
+            setIsSaving(true);
+            if (isAutoSave) setIsAutoSaving(true);
+            try {
                 const { error } = await supabase
                     .from('templates')
-                    .update({
-                        mjml_code: code,
-                        brand_id: brandId
-                    })
+                    .update({ mjml_code: code, brand_id: brandId })
                     .eq('id', currentTemplateId);
                 if (error) throw error;
-
-                // Update local list state immediately to avoid race condition with Realtime
                 setSavedTemplates(prev => prev.map(t =>
                     t.id === currentTemplateId ? { ...t, mjml_code: code, brand_id: brandId } : t
                 ));
-            } else {
-                // Auto-save shouldn't prompt for a name if it's a new template
-                if (isAutoSave) {
-                    setIsSaving(false);
-                    setIsAutoSaving(false);
-                    return;
-                }
-
-                // Create new
-                const name = prompt('Template name:', 'Untitled Template') || 'Untitled Template';
-                const { data, error } = await supabase
-                    .from('templates')
-                    .insert([{ mjml_code: code, brand_id: brandId, name }])
-                    .select()
-                    .single();
-                if (error) throw error;
-                setCurrentTemplateId(data.id);
-                setCurrentTemplateName(data.name);
-
-                // Update URL for new template
-                const url = new URL(window.location);
-                url.searchParams.set('template', data.id);
-                if (brandId) {
-                    url.searchParams.set('brand', brandId);
-                } else {
-                    url.searchParams.delete('brand');
-                }
-                window.history.pushState({}, '', url);
+                originalCodeRef.current = code;
+                setHasUnsavedChanges(false);
+                setToast({ message: isAutoSave ? 'Auto-saved' : 'Template saved!', type: isAutoSave ? 'info' : 'success' });
+            } catch (error) {
+                console.error('Save error:', error);
+                setToast({ message: isAutoSave ? 'Auto-save failed' : 'Error saving: ' + error.message, type: 'error' });
+            } finally {
+                setIsSaving(false);
+                if (isAutoSave) setIsAutoSaving(false);
             }
-
-            originalCodeRef.current = code;
-            setHasUnsavedChanges(false);
-
-            // Show appropriate toast message
-            if (isAutoSave) {
-                setToast({ message: 'Auto-saved', type: 'info' });
-            } else {
-                setToast({ message: 'Template saved!', type: 'success' });
-            }
-        } catch (error) {
-            console.error('Save error:', error);
-            if (!isAutoSave) {
-                setToast({ message: 'Error saving: ' + error.message, type: 'error' });
-            } else {
-                setToast({ message: 'Auto-save failed', type: 'error' });
-            }
-        } finally {
-            setIsSaving(false);
-            if (isAutoSave) {
-                setIsAutoSaving(false);
-            }
+        } else {
+            if (isAutoSave) return;
+            setNameModal({
+                open: true,
+                title: 'Name your template',
+                defaultValue: 'Untitled Template',
+                confirmLabel: 'Save',
+                onConfirm: async (name) => {
+                    setNameModal((p) => ({ ...p, open: false }));
+                    setIsSaving(true);
+                    try {
+                        await doCreateTemplate(name.trim() || 'Untitled Template');
+                        originalCodeRef.current = code;
+                        setHasUnsavedChanges(false);
+                        setToast({ message: 'Template saved!', type: 'success' });
+                    } catch (error) {
+                        console.error('Save error:', error);
+                        setToast({ message: 'Error saving: ' + error.message, type: 'error' });
+                    } finally {
+                        setIsSaving(false);
+                    }
+                },
+                onCancel: () => setNameModal((p) => ({ ...p, open: false }))
+            });
         }
     };
 
-    const handleDeleteTemplate = async (templateId, e) => {
+    const handleDeleteTemplate = (templateId, e) => {
         e.stopPropagation();
-        if (!confirm('Delete this template?')) return;
-
-        try {
-            const { error } = await supabase.from('templates').delete().eq('id', templateId);
-            if (error) throw error;
-            if (currentTemplateId === templateId) handleNewTemplate();
-        } catch (error) {
-            alert('Error deleting: ' + error.message);
-        }
+        setConfirmDialog({
+            open: true,
+            title: 'Delete template?',
+            message: 'This template will be removed. You can undo deletions from the editor.',
+            confirmLabel: 'Delete',
+            variant: 'danger',
+            onConfirm: async () => {
+                setConfirmDialog((p) => ({ ...p, open: false }));
+                try {
+                    const { error } = await supabase.from('templates').delete().eq('id', templateId);
+                    if (error) throw error;
+                    setSavedTemplates((prev) => prev.filter((t) => t.id !== templateId));
+                    if (savedTemplates.length === 1) setHasStartedCreating(false);
+                    if (currentTemplateId === templateId) doNewTemplate({ silent: true });
+                } catch (err) {
+                    setToast({ message: 'Error deleting: ' + err.message, type: 'error' });
+                }
+            }
+        });
     };
 
     const handleStartRename = (template, e) => {
@@ -699,7 +788,7 @@ export default function EmailBuilder() {
                 setCurrentTemplateName(editingTemplateName.trim());
             }
         } catch (error) {
-            alert('Error renaming: ' + error.message);
+            setToast({ message: 'Error renaming: ' + error.message, type: 'error' });
         } finally {
             setEditingTemplateId(null);
         }
@@ -796,9 +885,23 @@ export default function EmailBuilder() {
     };
 
     const handleUserModeExit = () => {
-        if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
-        setIsUserMode(false);
-        setSelectedComponent(null);
+        if (hasUnsavedChanges) {
+            setConfirmDialog({
+                open: true,
+                title: 'Discard changes?',
+                message: 'You have unsaved changes. Discard them and exit user mode?',
+                confirmLabel: 'Discard',
+                variant: 'danger',
+                onConfirm: () => {
+                    setConfirmDialog((p) => ({ ...p, open: false }));
+                    setIsUserMode(false);
+                    setSelectedComponent(null);
+                }
+            });
+        } else {
+            setIsUserMode(false);
+            setSelectedComponent(null);
+        }
     };
 
     // RENDER
@@ -916,8 +1019,8 @@ export default function EmailBuilder() {
 
             {/* MAIN CONTENT */}
             <div className="flex flex-1 overflow-hidden">
-                {/* LEFT SIDEBAR - Templates (hidden in user mode) */}
-                {!isUserMode && (
+                {/* LEFT SIDEBAR - Templates (hidden in user mode and when empty) */}
+                {!isUserMode && !showEmptyState && (
                 <aside className="w-56 border-r border-gray-700 bg-gray-850 flex flex-col">
                     <div className="p-3 border-b border-gray-700">
                         <button
@@ -935,22 +1038,7 @@ export default function EmailBuilder() {
                         </p>
 
                         {savedTemplates.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
-                                <div className="w-12 h-12 rounded-full bg-gray-700/50 flex items-center justify-center mb-3">
-                                    <FileText size={24} className="text-gray-500" />
-                                </div>
-                                <p className="text-gray-400 text-sm font-medium mb-1">No templates yet</p>
-                                <p className="text-gray-500 text-xs leading-relaxed">
-                                    Click <strong className="text-gray-400">New Template</strong> above to create your first email template.
-                                </p>
-                                <button
-                                    onClick={handleNewTemplate}
-                                    className="mt-4 flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 transition"
-                                >
-                                    <Plus size={14} />
-                                    Create template
-                                </button>
-                            </div>
+                            <p className="text-gray-500 text-xs px-2 py-4">No templates yet</p>
                         ) : (
                             <ul className="space-y-1">
                                 {savedTemplates.map((template) => (
@@ -1096,16 +1184,23 @@ export default function EmailBuilder() {
                         <div className="text-center max-w-md">
                             <h2 className="text-xl font-semibold text-white mb-2">Create your first email template</h2>
                             <p className="text-gray-400 text-sm leading-relaxed mb-6">
-                                Build responsive email templates with MJML. Start from scratch or use the starter template.
+                                Name your template to get started. You can edit the MJML code and save changes anytime.
                             </p>
                             <button
-                                onClick={handleNewTemplate}
+                                onClick={handleFirstTimeCreate}
                                 className="inline-flex items-center gap-2 px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-500 text-white transition shadow-lg shadow-blue-900/20"
                             >
                                 <Plus size={20} />
-                                Create template
+                                Get started
                             </button>
                         </div>
+                        <a
+                            href="/brands"
+                            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-400 transition"
+                        >
+                            <Palette size={14} />
+                            Manage Brands
+                        </a>
                     </div>
                 )}
 
@@ -1169,6 +1264,25 @@ export default function EmailBuilder() {
                 message={toast.message}
                 type={toast.type}
                 onDismiss={() => setToast({ message: '', type: 'info' })}
+            />
+
+            <ConfirmDialog
+                open={confirmDialog.open}
+                title={confirmDialog.title}
+                message={confirmDialog.message}
+                confirmLabel={confirmDialog.confirmLabel}
+                variant={confirmDialog.variant}
+                onConfirm={() => confirmDialog.onConfirm?.()}
+                onCancel={() => setConfirmDialog((p) => ({ ...p, open: false }))}
+            />
+
+            <NameModal
+                open={nameModal.open}
+                title={nameModal.title}
+                defaultValue={nameModal.defaultValue}
+                confirmLabel={nameModal.confirmLabel}
+                onConfirm={(name) => nameModal.onConfirm?.(name)}
+                onCancel={() => setNameModal((p) => ({ ...p, open: false }))}
             />
         </div>
     );
