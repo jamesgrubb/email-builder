@@ -36,17 +36,38 @@ function validateContent(content, options = DEFAULT_VALIDATION) {
     return { valid: true, error: null, sanitized };
 }
 
+function normalizeText(str) {
+    return String(str || '').trim().replace(/\s+/g, ' ');
+}
+
+function findEditableElement(doc, editableId, content) {
+    const selector = `[mj-class~="editable-${editableId}"]`;
+    const candidates = Array.from(doc.querySelectorAll(selector));
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+    const contentNorm = normalizeText(content);
+    if (!contentNorm) return candidates[0];
+    const byContent = candidates.find((el) => normalizeText(el.textContent) === contentNorm);
+    if (byContent) return byContent;
+    const byIncludes = candidates.find((el) => normalizeText(el.textContent).includes(contentNorm));
+    return byIncludes || candidates[0];
+}
+
 /**
  * Updates the content of an editable component in MJML code
  * Preserves all attributes and only changes text content
+ * Uses currentContent to find the exact element when multiple match (same as delete/duplicate)
  *
  * @param {string} mjmlCode - The MJML source code
  * @param {string} editableId - The data-editable-id of the component to update
- * @param {string} newContent - The new text content
+ * @param {string} newContent - The new text content to save
+ * @param {string} [currentContent] - Current content for element disambiguation
  * @param {object} validationOptions - Optional validation options
  * @returns {object} { success: boolean, mjml: string, error: string|null }
  */
-export function updateEditableContent(mjmlCode, editableId, newContent, validationOptions = {}) {
+export function updateEditableContent(mjmlCode, editableId, newContent, currentContentOrOpts, validationOptions = {}) {
+    const currentContent = typeof currentContentOrOpts === 'string' ? currentContentOrOpts : undefined;
+    const opts = typeof currentContentOrOpts === 'object' && currentContentOrOpts && !Array.isArray(currentContentOrOpts) ? currentContentOrOpts : validationOptions;
     if (!mjmlCode || !editableId) {
         return {
             success: false,
@@ -55,8 +76,7 @@ export function updateEditableContent(mjmlCode, editableId, newContent, validati
         };
     }
 
-    // Validate content
-    const validation = validateContent(newContent, validationOptions);
+    const validation = validateContent(newContent, opts);
     if (!validation.valid) {
         return {
             success: false,
@@ -81,11 +101,10 @@ export function updateEditableContent(mjmlCode, editableId, newContent, validati
             };
         }
 
-        // Find the element by mj-class (MJML uses mj-class, not data-editable-id)
-        const element = doc.querySelector(`[mj-class="editable-${editableId}"]`);
+        const element = findEditableElement(doc, editableId, currentContent);
 
         if (!element) {
-            const errorMsg = `Component with ID "${editableId}" not found`;
+            const errorMsg = `Component "${editableId}" not found`;
             console.warn(errorMsg);
             return {
                 success: false,
@@ -121,14 +140,15 @@ export function updateEditableContent(mjmlCode, editableId, newContent, validati
 }
 
 /**
- * Duplicates an editable component in MJML code
- * Generates new unique ID for the clone
+ * Duplicates an editable component in MJML code.
+ * Uses content + editableId for precise element selection (same as deleteComponent).
  *
  * @param {string} mjmlCode - The MJML source code
- * @param {string} editableId - The data-editable-id of the component to duplicate
+ * @param {string} editableId - The data-editable-id
+ * @param {string} content - The text content (for disambiguation when multiple match)
  * @returns {object} { success: boolean, mjml: string, error: string|null, newId: string|null }
  */
-export function duplicateComponent(mjmlCode, editableId) {
+export function duplicateComponent(mjmlCode, editableId, content) {
     if (!mjmlCode || !editableId) {
         return {
             success: false,
@@ -144,38 +164,35 @@ export function duplicateComponent(mjmlCode, editableId) {
 
         const parserError = doc.querySelector('parsererror');
         if (parserError) {
-            const errorMsg = 'Invalid MJML structure - cannot parse XML';
-            console.error(errorMsg, parserError.textContent);
             return {
                 success: false,
                 mjml: mjmlCode,
-                error: errorMsg,
+                error: 'Invalid MJML structure - cannot parse XML',
                 newId: null
             };
         }
 
-        // Find the original element by mj-class (MJML uses mj-class, not data-editable-id)
-        const original = doc.querySelector(`[mj-class="editable-${editableId}"]`);
+        const original = findEditableElement(doc, editableId, content);
 
         if (!original) {
-            const errorMsg = `Component with ID "${editableId}" not found`;
-            console.warn(errorMsg);
             return {
                 success: false,
                 mjml: mjmlCode,
-                error: errorMsg,
+                error: `Component "${editableId}" not found`,
                 newId: null
             };
         }
 
-        // Clone the element deeply
-        const clone = original.cloneNode(true);
+        const existingClass = (original.getAttribute('mj-class') || '').split(/\s+/).find((c) => c.startsWith('editable-'));
+        const baseId = existingClass ? existingClass.replace(/^editable-/, '') : editableId;
 
-        // Generate new unique ID and set mj-class so the clone is recognized as editable
+        const clone = original.cloneNode(true);
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 5);
-        const newId = `${editableId}-copy-${timestamp}-${random}`;
-        clone.setAttribute('mj-class', `editable-${newId}`);
+        const newId = `${baseId}-copy-${timestamp}-${random}`;
+        const currentMjClass = clone.getAttribute('mj-class') || '';
+        const newMjClass = currentMjClass.replace(/editable-[^\s]+/, `editable-${newId}`);
+        clone.setAttribute('mj-class', newMjClass || `editable-${newId}`);
 
         // Insert after original
         if (original.nextSibling) {
@@ -208,13 +225,15 @@ export function duplicateComponent(mjmlCode, editableId) {
 }
 
 /**
- * Deletes an editable component from MJML code
+ * Deletes an editable component from MJML code.
+ * Uses content + editableId to find the exact element (robust against ordering mismatches).
  *
  * @param {string} mjmlCode - The MJML source code
- * @param {string} editableId - The data-editable-id of the component to delete
+ * @param {string} editableId - The data-editable-id (e.g. "text-1")
+ * @param {string} content - The text content of the clicked element (for precise matching)
  * @returns {object} { success: boolean, mjml: string, error: string|null }
  */
-export function deleteComponent(mjmlCode, editableId) {
+export function deleteComponent(mjmlCode, editableId, content) {
     if (!mjmlCode || !editableId) {
         return {
             success: false,
@@ -238,17 +257,33 @@ export function deleteComponent(mjmlCode, editableId) {
             };
         }
 
-        // Find the element by mj-class (MJML uses mj-class, not data-editable-id)
-        const element = doc.querySelector(`[mj-class="editable-${editableId}"]`);
+        // Find candidates: elements with mj-class containing editable-{editableId}
+        const selector = `[mj-class~="editable-${editableId}"]`;
+        const candidates = Array.from(doc.querySelectorAll(selector));
+
+        const contentNorm = normalizeText(content);
+        let element = null;
+
+        if (candidates.length === 1) {
+            element = candidates[0];
+        } else if (candidates.length > 1 && contentNorm) {
+            // Match by content to pick the exact one
+            element = candidates.find((el) => {
+                const elText = normalizeText(el.textContent);
+                return elText === contentNorm;
+            });
+            if (!element && contentNorm) {
+                element = candidates.find((el) => normalizeText(el.textContent).includes(contentNorm));
+            }
+            if (!element) element = candidates[0];
+        } else if (candidates.length > 0) {
+            element = candidates[0];
+        }
 
         if (!element) {
-            const errorMsg = `Component with ID "${editableId}" not found`;
-            console.warn(errorMsg);
-            return {
-                success: false,
-                mjml: mjmlCode,
-                error: errorMsg
-            };
+            const err = `Component "${editableId}" not found`;
+            console.warn(err);
+            return { success: false, mjml: mjmlCode, error: err };
         }
 
         // Remove the element

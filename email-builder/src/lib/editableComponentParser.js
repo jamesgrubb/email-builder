@@ -25,13 +25,14 @@ export function parseEditableComponents(compiledHtml) {
         const editableComponents = [];
         const elements = doc.querySelectorAll('[data-editable="true"]');
 
-        elements.forEach((element, index) => {
+        elements.forEach((element, domIndex) => {
             const editableId = element.getAttribute('data-editable-id');
             const editableType = element.getAttribute('data-editable-type') || 'text';
+            const idxAttr = element.getAttribute('data-editable-index');
+            const index = idxAttr != null ? parseInt(idxAttr, 10) : domIndex;
 
-            // Ensure component has required ID
             if (!editableId) {
-                console.warn(`Editable component at index ${index} missing data-editable-id attribute`);
+                console.warn(`Editable component at index ${domIndex} missing data-editable-id attribute`);
                 return;
             }
 
@@ -41,7 +42,7 @@ export function parseEditableComponents(compiledHtml) {
                 tagName: element.tagName.toLowerCase(),
                 content: element.textContent?.trim() || '',
                 attributes: getElementAttributes(element),
-                index
+                index: Number.isNaN(index) ? domIndex : index
             });
         });
 

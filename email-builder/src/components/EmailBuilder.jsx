@@ -30,6 +30,24 @@ import {
     ensureMjClassOnBodyComponents
 } from '../lib/injectEditableAttributes';
 
+// Brand color values for mj-style (preset + custom)
+const PRESET_BRAND_COLORS = {
+    default: { primary: '#007bff', secondary: '#f8f9fa' },
+    dark: { primary: '#60a5fa', secondary: '#1a202c' },
+    simple: { primary: '#4c51bf', secondary: '#ebf8ff' }
+};
+
+function buildBrandStyleMjml(primary, secondary) {
+    return `
+<mj-style inline="inline">
+  .brand-primary div { color: ${primary} !important; }
+  .brand-secondary div { color: ${secondary} !important; }
+  .brand-section { background-color: ${secondary} !important; }
+  .brand-hero { background-color: ${primary} !important; }
+</mj-style>
+`;
+}
+
 // PRESET BRANDS
 const PRESET_BRANDS = {
     default: '',
@@ -52,10 +70,16 @@ const PRESET_BRANDS = {
 };
 
 const DEFAULT_CODE = `
-<mj-section>
+<mj-section css-class="brand-hero" padding="24px">
   <mj-column>
-    <mj-text mj-class="editable-text-1" font-size="20px">Hello World</mj-text>
+    <mj-text mj-class="editable-text-1" css-class="brand-primary" font-size="24px" font-weight="bold">Hello World</mj-text>
+    <mj-text mj-class="editable-text-2">This uses default brand text color.</mj-text>
     <mj-button mj-class="editable-button-1">Click Me</mj-button>
+  </mj-column>
+</mj-section>
+<mj-section css-class="brand-section">
+  <mj-column>
+    <mj-text>Secondary section background.</mj-text>
   </mj-column>
 </mj-section>
 `;
@@ -98,6 +122,10 @@ export default function EmailBuilder() {
     // Undo history
     const [canUndo, setCanUndo] = useState(false);
     const codeHistoryRef = useRef([]);
+
+    // Empty state: hide editor/preview until user starts creating (when no saved templates)
+    const [hasStartedCreating, setHasStartedCreating] = useState(false);
+    const showEmptyState = !isUserMode && savedTemplates.length === 0 && !hasStartedCreating;
 
     // Refs
     const editorRef = useRef(null);
@@ -144,7 +172,9 @@ export default function EmailBuilder() {
                     fontFamily: t.font_family,
                     textColor: t.text_color,
                     backgroundColor: t.background_color,
-                    accentColor: t.accent_color
+                    accentColor: t.accent_color,
+                    primaryColor: t.primary_color ?? t.accent_color,
+                    secondaryColor: t.secondary_color ?? '#6c757d'
                 }));
                 setSavedBrandsFull(mapped);
                 setSavedBrandNames(mapped.map(t => t.name));
@@ -246,8 +276,9 @@ export default function EmailBuilder() {
                 setActiveImageIndex(event.data.index);
                 if (widgetRef.current) widgetRef.current.open();
             } else if (event.data.type === 'EDITABLE_COMPONENT_CLICKED') {
-                // Handle editable component selection in user mode
-                const component = editableComponents.find(c => c.id === event.data.editableId);
+                // Handle editable component selection - match by index (from injection) for correct lookup
+                const idx = event.data.editableIndex;
+                const component = (typeof idx === 'number' && idx >= 0 && editableComponents.find(c => c.index === idx)) || editableComponents.find(c => c.id === event.data.editableId);
                 if (component) {
                     setSelectedComponent(component);
                     // Convert iframe coordinates to page coordinates for FloatingToolbar/InlineTextEditor
@@ -339,31 +370,50 @@ export default function EmailBuilder() {
                 finalMjml = code;
             } else {
                 // User provided body content only - wrap it
-                let brandMjml = PRESET_BRANDS[selectedBrand] || '';
+                let bodyContent = code;
+                if (isUserMode) {
+                    const transformed = ensureMjClassOnBodyComponents(code);
+                    if (transformed !== code) {
+                        bodyContent = transformed;
+                        setCode(transformed);
+                    }
+                }
 
-                if (!PRESET_BRANDS[selectedBrand]) {
+                let brandMjml = PRESET_BRANDS[selectedBrand] || '';
+                let primary = PRESET_BRAND_COLORS.default.primary;
+                let secondary = PRESET_BRAND_COLORS.default.secondary;
+
+                if (PRESET_BRAND_COLORS[selectedBrand]) {
+                    primary = PRESET_BRAND_COLORS[selectedBrand].primary;
+                    secondary = PRESET_BRAND_COLORS[selectedBrand].secondary;
+                } else {
                     const custom = savedBrandsFull.find(t => t.id === selectedBrand);
                     if (custom) {
+                        primary = custom.primaryColor ?? custom.accentColor;
+                        secondary = custom.secondaryColor ?? '#f8f9fa';
                         brandMjml = `
                         <mj-attributes>
                             <mj-all font-family="${custom.fontFamily}" />
                             <mj-text color="${custom.textColor}" />
                             <mj-body background-color="${custom.backgroundColor}" />
-                            <mj-button background-color="${custom.accentColor}" color="#ffffff" />
-                            <mj-section background-color="#ffffff" />
+                            <mj-button background-color="${primary}" color="#ffffff" />
+                            <mj-section background-color="${secondary}" />
                         </mj-attributes>
                         `;
                     }
                 }
+
+                const brandStyleMjml = buildBrandStyleMjml(primary, secondary);
 
                 finalMjml = `
             <mjml>
               <mj-head>
                 <mj-preview>Email Preview</mj-preview>
                 ${brandMjml}
+                ${brandStyleMjml}
               </mj-head>
               <mj-body>
-                ${code}
+                ${bodyContent}
               </mj-body>
             </mjml>
           `;
@@ -389,7 +439,7 @@ export default function EmailBuilder() {
                 injectionScript = `
                 <script>
                     // Make editable components interactive
-                    document.querySelectorAll('[data-editable="true"]').forEach((el) => {
+                    document.querySelectorAll('[data-editable="true"]').forEach((el, index) => {
                         const editableId = el.dataset.editableId;
                         if (!editableId) return;
 
@@ -412,9 +462,11 @@ export default function EmailBuilder() {
                             e.stopPropagation();
 
                             const bounds = el.getBoundingClientRect();
+                            const idx = el.dataset.editableIndex != null ? parseInt(el.dataset.editableIndex, 10) : index;
                             window.parent.postMessage({
                                 type: 'EDITABLE_COMPONENT_CLICKED',
                                 editableId: editableId,
+                                editableIndex: idx,
                                 editableType: el.dataset.editableType || 'text',
                                 currentContent: el.textContent,
                                 bounds: {
@@ -474,6 +526,7 @@ export default function EmailBuilder() {
 
     const handleNewTemplate = () => {
         if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+        if (savedTemplates.length === 0) setHasStartedCreating(true);
         codeHistoryRef.current = [];
         setCanUndo(false);
         setCode(DEFAULT_CODE);
@@ -677,7 +730,7 @@ export default function EmailBuilder() {
     const handleDuplicateComponent = () => {
         if (!selectedComponent) return;
 
-        const result = duplicateComponent(code, selectedComponent.id);
+        const result = duplicateComponent(code, selectedComponent.id, selectedComponent.content);
 
         if (result.success) {
             pushCodeToHistory(code);
@@ -692,7 +745,7 @@ export default function EmailBuilder() {
     const handleDeleteComponent = () => {
         if (!selectedComponent) return;
 
-        const result = deleteComponent(code, selectedComponent.id);
+        const result = deleteComponent(code, selectedComponent.id, selectedComponent.content);
 
         if (result.success) {
             pushCodeToHistory(code);
@@ -707,7 +760,7 @@ export default function EmailBuilder() {
     const handleSaveContent = (newContent) => {
         if (!selectedComponent) return;
 
-        const result = updateEditableContent(code, selectedComponent.id, newContent);
+        const result = updateEditableContent(code, selectedComponent.id, newContent, selectedComponent.content);
 
         if (result.success) {
             pushCodeToHistory(code);
@@ -755,7 +808,7 @@ export default function EmailBuilder() {
             {/* USER MODE TOOLBAR OR NORMAL HEADER */}
             {isUserMode ? (
                 <UserModeToolbar
-                    templateName={currentTemplateName}
+                    templateName={currentTemplateId ? currentTemplateName : 'New template (unsaved)'}
                     onSave={handleUserModeSave}
                     onExit={handleUserModeExit}
                     onUndo={handleUndo}
@@ -769,7 +822,7 @@ export default function EmailBuilder() {
                     <h1 className="text-lg font-bold text-white">MJML Builder</h1>
                     <span className="text-gray-400">|</span>
                     <span className="text-sm text-gray-300 flex items-center gap-2">
-                        {currentTemplateName}
+                        {currentTemplateId ? currentTemplateName : 'New template (unsaved)'}
                         {isAutoSaving && (
                             <span className="flex items-center gap-1 text-blue-400 text-xs font-medium bg-blue-400/10 px-1.5 py-0.5 rounded border border-blue-400/20">
                                 <Loader2 size={12} className="animate-spin" />
@@ -882,7 +935,22 @@ export default function EmailBuilder() {
                         </p>
 
                         {savedTemplates.length === 0 ? (
-                            <p className="text-gray-500 text-sm px-2">No templates yet</p>
+                            <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                                <div className="w-12 h-12 rounded-full bg-gray-700/50 flex items-center justify-center mb-3">
+                                    <FileText size={24} className="text-gray-500" />
+                                </div>
+                                <p className="text-gray-400 text-sm font-medium mb-1">No templates yet</p>
+                                <p className="text-gray-500 text-xs leading-relaxed">
+                                    Click <strong className="text-gray-400">New Template</strong> above to create your first email template.
+                                </p>
+                                <button
+                                    onClick={handleNewTemplate}
+                                    className="mt-4 flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 transition"
+                                >
+                                    <Plus size={14} />
+                                    Create template
+                                </button>
+                            </div>
                         ) : (
                             <ul className="space-y-1">
                                 {savedTemplates.map((template) => (
@@ -968,8 +1036,8 @@ export default function EmailBuilder() {
                 </aside>
                 )}
 
-                {/* CENTER - Code Editor (hidden in user mode) */}
-                {!isUserMode && (
+                {/* CENTER - Code Editor (hidden in user mode and when empty) */}
+                {!isUserMode && !showEmptyState && (
                 <div className="flex-1 border-r border-gray-700">
                     <Editor
                         height="100%"
@@ -1019,7 +1087,30 @@ export default function EmailBuilder() {
                 </div>
                 )}
 
-                {/* RIGHT - Preview */}
+                {/* Empty state - when no templates and user hasn't started creating */}
+                {showEmptyState && (
+                    <div className="flex-1 flex flex-col items-center justify-center gap-6 bg-gray-900/50 px-8">
+                        <div className="w-20 h-20 rounded-2xl bg-gray-800 flex items-center justify-center border border-gray-700">
+                            <FileText size={40} className="text-gray-500" />
+                        </div>
+                        <div className="text-center max-w-md">
+                            <h2 className="text-xl font-semibold text-white mb-2">Create your first email template</h2>
+                            <p className="text-gray-400 text-sm leading-relaxed mb-6">
+                                Build responsive email templates with MJML. Start from scratch or use the starter template.
+                            </p>
+                            <button
+                                onClick={handleNewTemplate}
+                                className="inline-flex items-center gap-2 px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-500 text-white transition shadow-lg shadow-blue-900/20"
+                            >
+                                <Plus size={20} />
+                                Create template
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* RIGHT - Preview (hidden when empty state) */}
+                {!showEmptyState && (
                 <div className="flex-1 bg-gray-100 relative">
                     <div className="absolute top-2 left-2 bg-white/90 text-gray-600 text-xs px-2 py-1 rounded shadow z-10">
                         Preview
@@ -1049,6 +1140,7 @@ export default function EmailBuilder() {
                         sandbox="allow-scripts"
                     />
                 </div>
+                )}
             </div>
 
             {/* User Mode - Floating Toolbar */}

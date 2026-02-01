@@ -111,13 +111,14 @@ export function extractEditableMappings(mjmlSource) {
             const className = element.getAttribute('mj-class');
             const content = element.textContent?.trim() || '';
 
-            // Generate editable ID from class name and content
-            const editableId = className.replace(/^editable-/, '');
+            // Extract editable ID and class for selector (handles "editable-text-1 brand-primary")
+            const editableMatch = className.match(/editable-([^\s]+)/);
+            const editableId = editableMatch ? editableMatch[1] : className.replace(/^editable-/, '');
+            const editableClass = editableMatch ? `editable-${editableMatch[1]}` : (className.startsWith('editable-') ? className.split(/\s+/)[0] : className);
 
-            // Only process classes that start with 'editable-'
-            if (className && className.startsWith('editable-')) {
+            if (className && className.includes('editable-')) {
                 mappings.push({
-                    className,
+                    className: editableClass,
                     editableId,
                     content,
                     tagName: element.tagName.toLowerCase()
@@ -149,19 +150,22 @@ export function injectEditableAttributes(compiledHtml, mappings) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(compiledHtml, 'text/html');
 
-        mappings.forEach(({ className, editableId, content, tagName }) => {
-            // Find elements in HTML with this class
-            const elements = doc.querySelectorAll(`.${className}`);
+        mappings.forEach(({ className, editableId, content, tagName }, mappingIndex) => {
+            // Find elements in HTML with this class (use [class~=] for space-separated class lists)
+            const elements = doc.querySelectorAll(`[class~="${className}"]`);
 
             elements.forEach((element) => {
-                // Match by content when possible; MJML outputs nested tables so textContent may include extra whitespace
+                // Prefer exact content match to avoid tagging parent containers that include child text.
+                // When only one element matches, tag it (handles empty/whitespace content).
                 const elText = element.textContent?.trim().replace(/\s+/g, ' ');
                 const contentNorm = content.trim().replace(/\s+/g, ' ');
-                const contentMatches = elText === contentNorm || elText.includes(contentNorm);
+                const exactMatch = elText === contentNorm;
+                const singleElement = elements.length === 1;
 
-                if (contentMatches || elements.length === 1) {
+                if (exactMatch || singleElement) {
                     element.setAttribute('data-editable', 'true');
                     element.setAttribute('data-editable-id', editableId);
+                    element.setAttribute('data-editable-index', String(mappingIndex));
                     const editableType =
                         tagName === 'mj-button' ? 'button' : tagName === 'mj-image' ? 'image' : 'text';
                     element.setAttribute('data-editable-type', editableType);

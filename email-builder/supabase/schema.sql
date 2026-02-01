@@ -15,7 +15,9 @@ create table if not exists public.brands (
   font_family text not null,
   text_color text not null,
   background_color text not null,
-  accent_color text not null
+  accent_color text not null,
+  primary_color text default '#007bff',
+  secondary_color text default '#f8f9fa'
 );
 
 -- 3. Create 'templates' if it doesn't exist
