@@ -1,7 +1,7 @@
 import React from 'react';
-import { Save, X, Eye } from 'lucide-react';
+import { Save, X, Eye, Undo2 } from 'lucide-react';
 
-export default function UserModeToolbar({ templateName, onSave, onExit, isSaving, hasChanges }) {
+export default function UserModeToolbar({ templateName, onSave, onExit, onUndo, canUndo, isSaving, hasChanges }) {
     return (
         <div className="bg-gradient-to-r from-blue-600 to-blue-700 border-b border-blue-800 px-4 py-3">
             <div className="flex items-center justify-between">
@@ -19,6 +19,16 @@ export default function UserModeToolbar({ templateName, onSave, onExit, isSaving
                             Unsaved changes
                         </span>
                     )}
+
+                    <button
+                        onClick={onUndo}
+                        disabled={!canUndo}
+                        title="Undo last change"
+                        className={`flex items-center gap-2 px-4 py-2 rounded font-medium text-sm transition-all ${!canUndo ? 'bg-blue-800/30 text-blue-400/70 cursor-not-allowed' : 'bg-blue-800/50 text-white hover:bg-blue-800'}`}
+                    >
+                        <Undo2 size={16} />
+                        Undo
+                    </button>
 
                     <button
                         onClick={onSave}

@@ -14,7 +14,8 @@ import {
     Check,
     X,
     Loader2,
-    Eye
+    Eye,
+    Undo2
 } from 'lucide-react';
 import Toast from './Toast';
 import UserModeToolbar from './UserModeToolbar';
@@ -92,6 +93,10 @@ export default function EmailBuilder() {
     const [selectedComponent, setSelectedComponent] = useState(null);
     const [selectedComponentBounds, setSelectedComponentBounds] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
+
+    // Undo history
+    const [canUndo, setCanUndo] = useState(false);
+    const codeHistoryRef = useRef([]);
 
     // Refs
     const editorRef = useRef(null);
@@ -271,6 +276,7 @@ export default function EmailBuilder() {
         if (index === null) return;
 
         setCode(prevCode => {
+            pushCodeToHistory(prevCode);
             let count = 0;
             // Robust regex to find nth <mj-image> and replace its src
             const newCode = prevCode.replace(/<mj-image[^>]*src="([^"]*)"[^>]*>/g, (match, p1) => {
@@ -445,8 +451,28 @@ export default function EmailBuilder() {
     }, [code, selectedBrand, savedBrandsFull, isUserMode]);
 
     // HANDLERS
+    const pushCodeToHistory = (currentCode) => {
+        const stack = codeHistoryRef.current;
+        if (stack.length > 0 && stack[stack.length - 1] === currentCode) return;
+        if (stack.length >= 50) stack.shift();
+        stack.push(currentCode);
+        setCanUndo(true);
+    };
+
+    const handleUndo = () => {
+        const stack = codeHistoryRef.current;
+        if (stack.length === 0) return;
+        const prevCode = stack.pop();
+        setCode(prevCode);
+        setCanUndo(stack.length > 0);
+        setSelectedComponent(null);
+        setToast({ message: 'Changes undone', type: 'info' });
+    };
+
     const handleNewTemplate = () => {
         if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+        codeHistoryRef.current = [];
+        setCanUndo(false);
         setCode(DEFAULT_CODE);
         setCurrentTemplateId(null);
         setCurrentTemplateName('New Template');
@@ -460,6 +486,9 @@ export default function EmailBuilder() {
 
     const handleLoadTemplate = (template) => {
         if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+
+        codeHistoryRef.current = [];
+        setCanUndo(false);
 
         // Sync Brand selection with template's brand
         if (template.brand_id) {
@@ -633,6 +662,7 @@ export default function EmailBuilder() {
         const result = duplicateComponent(code, selectedComponent.id);
 
         if (result.success) {
+            pushCodeToHistory(code);
             setCode(result.mjml);
             setSelectedComponent(null);
             setToast({ message: 'Component duplicated successfully', type: 'success' });
@@ -651,6 +681,7 @@ export default function EmailBuilder() {
         const result = deleteComponent(code, selectedComponent.id);
 
         if (result.success) {
+            pushCodeToHistory(code);
             setCode(result.mjml);
             setSelectedComponent(null);
             setToast({ message: 'Component deleted successfully', type: 'success' });
@@ -665,6 +696,7 @@ export default function EmailBuilder() {
         const result = updateEditableContent(code, selectedComponent.id, newContent);
 
         if (result.success) {
+            pushCodeToHistory(code);
             setCode(result.mjml);
             setIsEditing(false);
             setSelectedComponent(null);
@@ -705,6 +737,8 @@ export default function EmailBuilder() {
                     templateName={currentTemplateName}
                     onSave={handleUserModeSave}
                     onExit={handleUserModeExit}
+                    onUndo={handleUndo}
+                    canUndo={canUndo}
                     isSaving={isSaving}
                     hasChanges={hasUnsavedChanges}
                 />
@@ -734,6 +768,17 @@ export default function EmailBuilder() {
                             </span>
                         )}
                     </span>
+
+                    {/* Undo button */}
+                    <button
+                        onClick={handleUndo}
+                        disabled={!canUndo}
+                        title="Undo last change"
+                        className={`gap-2 ml-2 px-3 py-1 rounded font-medium text-xs transition-all flex items-center ${!canUndo ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                    >
+                        <Undo2 size={12} />
+                        Undo
+                    </button>
 
                     {/* Save Button relocated here */}
                     <button
