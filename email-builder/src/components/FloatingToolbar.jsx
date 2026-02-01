@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Trash2, Edit3 } from 'lucide-react';
+import { Copy, Trash2, Edit3, Image } from 'lucide-react';
 
 export default function FloatingToolbar({
     selectedComponent,
@@ -36,10 +36,19 @@ export default function FloatingToolbar({
             <button
                 onClick={onEdit}
                 className="flex items-center gap-1 px-3 py-1.5 text-white hover:bg-blue-700 rounded text-sm font-medium transition"
-                title="Edit content"
+                title={selectedComponent?.type === 'image' ? 'Change image' : 'Edit content'}
             >
-                <Edit3 size={14} />
-                Edit
+                {selectedComponent?.type === 'image' ? (
+                    <>
+                        <Image size={14} />
+                        Change image
+                    </>
+                ) : (
+                    <>
+                        <Edit3 size={14} />
+                        Edit
+                    </>
+                )}
             </button>
 
             <div className="w-px h-5 bg-blue-400" />

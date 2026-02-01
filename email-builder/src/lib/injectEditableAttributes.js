@@ -40,6 +40,52 @@ export function ensureEditableClassesInMjml(mjmlSource) {
     return mjmlSource;
 }
 
+const EDITABLE_TAGS = ['mj-text', 'mj-button', 'mj-image'];
+
+/**
+ * Adds mj-class="editable-{tag}-{n}" to mj-text, mj-button, mj-image that lack mj-class.
+ * Makes templates editable by default when entering User Mode.
+ * @param {string} mjmlSource - MJML document or body-only fragment
+ * @returns {string} MJML with mj-class added where missing
+ */
+export function ensureMjClassOnBodyComponents(mjmlSource) {
+    if (!mjmlSource || typeof mjmlSource !== 'string') return mjmlSource;
+
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(`<root>${mjmlSource}</root>`, 'text/xml');
+
+        const parserError = doc.querySelector('parsererror');
+        if (parserError) {
+            console.error('MJML parsing error:', parserError.textContent);
+            return mjmlSource;
+        }
+
+        const tagCounters = { 'mj-text': 0, 'mj-button': 0, 'mj-image': 0 };
+        let modified = false;
+
+        EDITABLE_TAGS.forEach((tagName) => {
+            const elements = doc.querySelectorAll(tagName);
+            elements.forEach((el) => {
+                if (el.hasAttribute('mj-class')) return;
+                tagCounters[tagName]++;
+                const shortTag = tagName.replace('mj-', '');
+                el.setAttribute('mj-class', `editable-${shortTag}-${tagCounters[tagName]}`);
+                modified = true;
+            });
+        });
+
+        if (!modified) return mjmlSource;
+
+        const serializer = new XMLSerializer();
+        const result = serializer.serializeToString(doc.documentElement);
+        return result.replace(/^<root>/, '').replace(/<\/root>$/, '');
+    } catch (error) {
+        console.error('Error adding mj-class to body components:', error);
+        return mjmlSource;
+    }
+}
+
 /**
  * Extracts editable component mappings from MJML source
  * Returns array of { className, editableId, content }
@@ -116,10 +162,9 @@ export function injectEditableAttributes(compiledHtml, mappings) {
                 if (contentMatches || elements.length === 1) {
                     element.setAttribute('data-editable', 'true');
                     element.setAttribute('data-editable-id', editableId);
-                    element.setAttribute(
-                        'data-editable-type',
-                        tagName === 'mj-button' ? 'button' : 'text'
-                    );
+                    const editableType =
+                        tagName === 'mj-button' ? 'button' : tagName === 'mj-image' ? 'image' : 'text';
+                    element.setAttribute('data-editable-type', editableType);
                 }
             });
         });

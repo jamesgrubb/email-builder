@@ -26,7 +26,8 @@ import { updateEditableContent, duplicateComponent, deleteComponent } from '../l
 import {
     extractEditableMappings,
     injectEditableAttributes,
-    ensureEditableClassesInMjml
+    ensureEditableClassesInMjml,
+    ensureMjClassOnBodyComponents
 } from '../lib/injectEditableAttributes';
 
 // PRESET BRANDS
@@ -53,8 +54,8 @@ const PRESET_BRANDS = {
 const DEFAULT_CODE = `
 <mj-section>
   <mj-column>
-    <mj-text font-size="20px">Hello World</mj-text>
-    <mj-button>Click Me</mj-button>
+    <mj-text mj-class="editable-text-1" font-size="20px">Hello World</mj-text>
+    <mj-button mj-class="editable-button-1">Click Me</mj-button>
   </mj-column>
 </mj-section>
 `;
@@ -274,6 +275,8 @@ export default function EmailBuilder() {
     const handleImageUploaded = (url) => {
         const index = activeIndexRef.current;
         if (index === null) return;
+
+        setToast({ message: 'Image updated successfully', type: 'success' });
 
         setCode(prevCode => {
             pushCodeToHistory(prevCode);
@@ -651,9 +654,24 @@ export default function EmailBuilder() {
 
     // USER MODE HANDLERS
     const handleEditComponent = () => {
-        if (selectedComponent) {
-            setIsEditing(true);
+        if (!selectedComponent) return;
+
+        // Images: open Cloudinary widget to replace; text/button: open inline editor
+        if (selectedComponent.type === 'image') {
+            const match = selectedComponent.id.match(/^image-(\d+)$/);
+            const index = match ? parseInt(match[1], 10) - 1 : 0;
+            activeIndexRef.current = index;
+            setActiveImageIndex(index);
+            setSelectedComponent(null);
+            if (widgetRef.current) {
+                widgetRef.current.open();
+            } else {
+                setToast({ message: 'Image upload is loading...', type: 'info' });
+            }
+            return;
         }
+
+        setIsEditing(true);
     };
 
     const handleDuplicateComponent = () => {
@@ -673,10 +691,6 @@ export default function EmailBuilder() {
 
     const handleDeleteComponent = () => {
         if (!selectedComponent) return;
-
-        if (!confirm('Are you sure you want to delete this component? This action cannot be undone.')) {
-            return;
-        }
 
         const result = deleteComponent(code, selectedComponent.id);
 
@@ -712,6 +726,13 @@ export default function EmailBuilder() {
     };
 
     const handleToggleUserMode = () => {
+        if (!isUserMode) {
+            // Entering User Mode: ensure body components have mj-class for editing
+            const transformed = ensureMjClassOnBodyComponents(code);
+            if (transformed !== code) {
+                setCode(transformed);
+            }
+        }
         setIsUserMode(!isUserMode);
         setSelectedComponent(null);
         setIsEditing(false);
