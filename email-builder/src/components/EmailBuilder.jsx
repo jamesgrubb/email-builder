@@ -99,6 +99,7 @@ export default function EmailBuilder() {
     const cloudinaryRef = useRef();
     const widgetRef = useRef();
     const activeIndexRef = useRef(null);
+    const previewIframeRef = useRef(null);
 
     // Keep activeIndexRef in sync for the widget callback
     useEffect(() => {
@@ -243,7 +244,19 @@ export default function EmailBuilder() {
                 const component = editableComponents.find(c => c.id === event.data.editableId);
                 if (component) {
                     setSelectedComponent(component);
-                    setSelectedComponentBounds(event.data.bounds);
+                    // Convert iframe coordinates to page coordinates for FloatingToolbar/InlineTextEditor
+                    const iframeBounds = event.data.bounds;
+                    let bounds = iframeBounds;
+                    if (previewIframeRef.current) {
+                        const iframeRect = previewIframeRef.current.getBoundingClientRect();
+                        bounds = {
+                            top: iframeRect.top + iframeBounds.top,
+                            left: iframeRect.left + iframeBounds.left,
+                            width: iframeBounds.width,
+                            height: iframeBounds.height
+                        };
+                    }
+                    setSelectedComponentBounds(bounds);
                     setIsEditing(false); // Show toolbar, not editor
                 }
             }
@@ -963,6 +976,7 @@ export default function EmailBuilder() {
                     }
 
                     <iframe
+                        ref={previewIframeRef}
                         title="Preview"
                         srcDoc={preview}
                         className="w-full h-full border-none"
