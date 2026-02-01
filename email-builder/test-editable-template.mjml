@@ -1,0 +1,115 @@
+<mjml>
+  <mj-head>
+    <!-- Add custom HTML attributes to make components editable -->
+    <mj-html-attributes>
+      <mj-selector path=".editable-heading">
+        <mj-html-attribute name="data-editable">true</mj-html-attribute>
+        <mj-html-attribute name="data-editable-id">heading-1</mj-html-attribute>
+      </mj-selector>
+      <mj-selector path=".editable-subheading">
+        <mj-html-attribute name="data-editable">true</mj-html-attribute>
+        <mj-html-attribute name="data-editable-id">subheading-1</mj-html-attribute>
+      </mj-selector>
+      <mj-selector path=".editable-body">
+        <mj-html-attribute name="data-editable">true</mj-html-attribute>
+        <mj-html-attribute name="data-editable-id">body-1</mj-html-attribute>
+      </mj-selector>
+      <mj-selector path=".editable-cta">
+        <mj-html-attribute name="data-editable">true</mj-html-attribute>
+        <mj-html-attribute name="data-editable-id">cta-button-1</mj-html-attribute>
+      </mj-selector>
+      <mj-selector path=".editable-footer">
+        <mj-html-attribute name="data-editable">true</mj-html-attribute>
+        <mj-html-attribute name="data-editable-id">footer-1</mj-html-attribute>
+      </mj-selector>
+    </mj-html-attributes>
+
+    <mj-attributes>
+      <mj-text font-family="Arial, sans-serif" />
+      <mj-section background-color="#ffffff" />
+    </mj-attributes>
+  </mj-head>
+
+  <mj-body background-color="#f4f4f4">
+    <!-- Header Section -->
+    <mj-section background-color="#4A90E2" padding="20px">
+      <mj-column>
+        <mj-text
+          mj-class="editable-heading"
+          align="center"
+          color="#ffffff"
+          font-size="32px"
+          font-weight="bold"
+        >
+          Welcome to Our Newsletter
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Subheading Section -->
+    <mj-section padding="20px">
+      <mj-column>
+        <mj-text
+          mj-class="editable-subheading"
+          align="center"
+          color="#333333"
+          font-size="20px"
+          font-weight="600"
+        >
+          Your Monthly Update
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Main Content Section -->
+    <mj-section padding="20px">
+      <mj-column>
+        <mj-text
+          mj-class="editable-body"
+          color="#555555"
+          font-size="16px"
+          line-height="24px"
+        >
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- CTA Button Section -->
+    <mj-section padding="20px">
+      <mj-column>
+        <mj-button
+          mj-class="editable-cta"
+          background-color="#4A90E2"
+          color="#ffffff"
+          font-size="16px"
+          font-weight="bold"
+          href="https://example.com"
+        >
+          Click Here to Learn More
+        </mj-button>
+      </mj-column>
+    </mj-section>
+
+    <!-- Divider -->
+    <mj-section padding="20px">
+      <mj-column>
+        <mj-divider border-color="#cccccc" />
+      </mj-column>
+    </mj-section>
+
+    <!-- Footer Section (Not Editable) -->
+    <mj-section background-color="#333333" padding="20px">
+      <mj-column>
+        <mj-text
+          mj-class="editable-footer"
+          align="center"
+          color="#ffffff"
+          font-size="12px"
+        >
+          © 2024 Your Company. All rights reserved.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

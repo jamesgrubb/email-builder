@@ -13,9 +13,15 @@ import {
     Pencil,
     Check,
     X,
-    Loader2
+    Loader2,
+    Eye
 } from 'lucide-react';
 import Toast from './Toast';
+import UserModeToolbar from './UserModeToolbar';
+import FloatingToolbar from './FloatingToolbar';
+import InlineTextEditor from './InlineTextEditor';
+import { parseEditableComponents } from '../lib/editableComponentParser';
+import { updateEditableContent, duplicateComponent, deleteComponent } from '../lib/mjmlContentUpdater';
 
 // PRESET BRANDS
 const PRESET_BRANDS = {
@@ -74,6 +80,13 @@ export default function EmailBuilder() {
     // Toast & Auto-save state
     const [toast, setToast] = useState({ message: '', type: 'info' });
     const autoSaveTimerRef = useRef(null);
+
+    // User Mode state
+    const [isUserMode, setIsUserMode] = useState(false);
+    const [editableComponents, setEditableComponents] = useState([]);
+    const [selectedComponent, setSelectedComponent] = useState(null);
+    const [selectedComponentBounds, setSelectedComponentBounds] = useState(null);
+    const [isEditing, setIsEditing] = useState(false);
 
     // Refs
     const editorRef = useRef(null);
@@ -136,24 +149,39 @@ export default function EmailBuilder() {
             const brandId = params.get('brand');
 
             if (brandId) {
-                setSelectedBrand(brandId);
+                // Validate it's either a preset or a valid UUID
+                const isPreset = !!PRESET_BRANDS[brandId];
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (isPreset || uuidRegex.test(brandId)) {
+                    setSelectedBrand(brandId);
+                } else {
+                    console.warn('Invalid brand ID in URL, ignoring:', brandId);
+                }
             }
 
-            if (templateId) {
-                const { data } = await supabase
-                    .from('templates')
-                    .select('*')
-                    .eq('id', templateId)
-                    .single();
+            if (templateId && templateId.trim()) {
+                try {
+                    const { data } = await supabase
+                        .from('templates')
+                        .select('*')
+                        .eq('id', templateId)
+                        .single();
 
-                if (data) {
-                    setCode(data.mjml_code);
-                    setCurrentTemplateId(data.id);
-                    setCurrentTemplateName(data.name);
-                    originalCodeRef.current = data.mjml_code;
-                    if (data.brand_id) {
-                        setSelectedBrand(data.brand_id);
+                    if (data) {
+                        setCode(data.mjml_code);
+                        setCurrentTemplateId(data.id);
+                        setCurrentTemplateName(data.name);
+                        originalCodeRef.current = data.mjml_code;
+                        if (data.brand_id) {
+                            setSelectedBrand(data.brand_id);
+                        }
                     }
+                } catch (error) {
+                    console.error('Error loading template from URL:', error);
+                    // Clear invalid template param from URL
+                    const url = new URL(window.location);
+                    url.searchParams.delete('template');
+                    window.history.replaceState({}, '', url);
                 }
             }
         };
@@ -173,6 +201,26 @@ export default function EmailBuilder() {
             window.history.replaceState({}, '', url);
         }
     }, [selectedBrand, currentTemplateId]);
+
+    // Parse editable components from compiled HTML (for user mode)
+    useEffect(() => {
+        if (isUserMode && preview) {
+            // Debug: Check if data-editable attributes exist in HTML
+            const hasDataEditable = preview.includes('data-editable');
+            console.log('Preview HTML contains data-editable:', hasDataEditable);
+            if (hasDataEditable) {
+                // Show a sample of where it appears
+                const match = preview.match(/data-editable[^>]*>/);
+                if (match) console.log('Sample:', match[0]);
+            }
+
+            const components = parseEditableComponents(preview);
+            console.log('Found editable components:', components);
+            setEditableComponents(components);
+        } else if (isUserMode && !preview) {
+            setEditableComponents([]);
+        }
+    }, [preview, isUserMode]);
 
     // Cloudinary Widget Initialization
     useEffect(() => {
@@ -195,12 +243,20 @@ export default function EmailBuilder() {
             if (event.data.type === 'IMAGE_CLICKED') {
                 setActiveImageIndex(event.data.index);
                 if (widgetRef.current) widgetRef.current.open();
+            } else if (event.data.type === 'EDITABLE_COMPONENT_CLICKED') {
+                // Handle editable component selection in user mode
+                const component = editableComponents.find(c => c.id === event.data.editableId);
+                if (component) {
+                    setSelectedComponent(component);
+                    setSelectedComponentBounds(event.data.bounds);
+                    setIsEditing(false); // Show toolbar, not editor
+                }
             }
         };
 
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, []);
+    }, [editableComponents]);
 
     const handleImageUploaded = (url) => {
         const index = activeIndexRef.current;
@@ -256,39 +312,98 @@ export default function EmailBuilder() {
     // MJML Compiler
     useEffect(() => {
         try {
-            let brandMjml = PRESET_BRANDS[selectedBrand] || '';
+            // Detect if user provided full MJML document or just body content
+            const isFullMjml = code.trim().startsWith('<mjml');
 
-            if (!PRESET_BRANDS[selectedBrand]) {
-                const custom = savedBrandsFull.find(t => t.id === selectedBrand);
-                if (custom) {
-                    brandMjml = `
-                    <mj-attributes>
-                        <mj-all font-family="${custom.fontFamily}" />
-                        <mj-text color="${custom.textColor}" />
-                        <mj-body background-color="${custom.backgroundColor}" />
-                        <mj-button background-color="${custom.accentColor}" color="#ffffff" />
-                        <mj-section background-color="#ffffff" />
-                    </mj-attributes>
-                    `;
+            let finalMjml;
+
+            if (isFullMjml) {
+                // User provided full MJML document - use as-is
+                finalMjml = code;
+            } else {
+                // User provided body content only - wrap it
+                let brandMjml = PRESET_BRANDS[selectedBrand] || '';
+
+                if (!PRESET_BRANDS[selectedBrand]) {
+                    const custom = savedBrandsFull.find(t => t.id === selectedBrand);
+                    if (custom) {
+                        brandMjml = `
+                        <mj-attributes>
+                            <mj-all font-family="${custom.fontFamily}" />
+                            <mj-text color="${custom.textColor}" />
+                            <mj-body background-color="${custom.backgroundColor}" />
+                            <mj-button background-color="${custom.accentColor}" color="#ffffff" />
+                            <mj-section background-color="#ffffff" />
+                        </mj-attributes>
+                        `;
+                    }
                 }
-            }
 
-            const finalMjml = `
-        <mjml>
-          <mj-head>
-            <mj-preview>Email Preview</mj-preview>
-            ${brandMjml}
-          </mj-head>
-          <mj-body>
-            ${code}
-          </mj-body>
-        </mjml>
-      `;
+                finalMjml = `
+            <mjml>
+              <mj-head>
+                <mj-preview>Email Preview</mj-preview>
+                ${brandMjml}
+              </mj-head>
+              <mj-body>
+                ${code}
+              </mj-body>
+            </mjml>
+          `;
+            }
 
             const { html, errors } = mjml2html(finalMjml, { validationLevel: 'soft' });
 
-            // Inject click script for images
-            const injectedHtml = html.replace('</body>', `
+            // Inject click scripts based on mode
+            let injectionScript = '';
+
+            if (isUserMode) {
+                // User Mode: Make editable components interactive
+                injectionScript = `
+                <script>
+                    // Make editable components interactive
+                    document.querySelectorAll('[data-editable="true"]').forEach((el) => {
+                        const editableId = el.dataset.editableId;
+                        if (!editableId) return;
+
+                        el.style.transition = 'outline 0.2s, background-color 0.2s';
+                        el.style.cursor = 'pointer';
+
+                        el.addEventListener('mouseenter', () => {
+                            el.style.outline = '2px dashed #3b82f6';
+                            el.style.outlineOffset = '2px';
+                            el.style.backgroundColor = 'rgba(59, 130, 246, 0.05)';
+                        });
+
+                        el.addEventListener('mouseleave', () => {
+                            el.style.outline = 'none';
+                            el.style.backgroundColor = 'transparent';
+                        });
+
+                        el.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+
+                            const bounds = el.getBoundingClientRect();
+                            window.parent.postMessage({
+                                type: 'EDITABLE_COMPONENT_CLICKED',
+                                editableId: editableId,
+                                editableType: el.dataset.editableType || 'text',
+                                currentContent: el.textContent,
+                                bounds: {
+                                    top: bounds.top,
+                                    left: bounds.left,
+                                    width: bounds.width,
+                                    height: bounds.height
+                                }
+                            }, '*');
+                        });
+                    });
+                </script>
+                `;
+            } else {
+                // Normal Mode: Image replacement functionality
+                injectionScript = `
                 <script>
                     document.querySelectorAll('img').forEach((img, index) => {
                         img.style.cursor = 'pointer';
@@ -299,14 +414,17 @@ export default function EmailBuilder() {
                         };
                     });
                 </script>
-            </body>`);
+                `;
+            }
+
+            const injectedHtml = html.replace('</body>', `${injectionScript}</body>`);
 
             setCompileErrors(errors.length > 0 ? errors : []);
             setPreview(injectedHtml);
         } catch (e) {
             console.error("Compilation Error:", e);
         }
-    }, [code, selectedBrand, savedBrandsFull]);
+    }, [code, selectedBrand, savedBrandsFull, isUserMode]);
 
     // HANDLERS
     const handleNewTemplate = () => {
@@ -362,7 +480,14 @@ export default function EmailBuilder() {
 
         try {
             const isPreset = !!PRESET_BRANDS[selectedBrand];
-            const brandId = isPreset ? null : selectedBrand;
+            let brandId = isPreset ? null : selectedBrand;
+
+            // Validate brandId is a valid UUID or null
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (brandId && !uuidRegex.test(brandId)) {
+                console.warn('Invalid brand ID, using null:', brandId);
+                brandId = null;
+            }
 
             if (currentTemplateId) {
                 // Update existing
@@ -477,12 +602,96 @@ export default function EmailBuilder() {
         }
     };
 
+    // USER MODE HANDLERS
+    const handleEditComponent = () => {
+        if (selectedComponent) {
+            setIsEditing(true);
+        }
+    };
+
+    const handleDuplicateComponent = () => {
+        if (!selectedComponent) return;
+
+        const result = duplicateComponent(code, selectedComponent.id);
+
+        if (result.success) {
+            setCode(result.mjml);
+            setSelectedComponent(null);
+            setToast({ message: 'Component duplicated successfully', type: 'success' });
+        } else {
+            setToast({ message: result.error || 'Failed to duplicate component', type: 'error' });
+        }
+    };
+
+    const handleDeleteComponent = () => {
+        if (!selectedComponent) return;
+
+        if (!confirm('Are you sure you want to delete this component? This action cannot be undone.')) {
+            return;
+        }
+
+        const result = deleteComponent(code, selectedComponent.id);
+
+        if (result.success) {
+            setCode(result.mjml);
+            setSelectedComponent(null);
+            setToast({ message: 'Component deleted successfully', type: 'success' });
+        } else {
+            setToast({ message: result.error || 'Failed to delete component', type: 'error' });
+        }
+    };
+
+    const handleSaveContent = (newContent) => {
+        if (!selectedComponent) return;
+
+        const result = updateEditableContent(code, selectedComponent.id, newContent);
+
+        if (result.success) {
+            setCode(result.mjml);
+            setIsEditing(false);
+            setSelectedComponent(null);
+            setToast({ message: 'Content updated successfully', type: 'success' });
+        } else {
+            // Show error but keep editor open so user can fix it
+            setToast({ message: result.error || 'Failed to update content', type: 'error' });
+        }
+    };
+
+    const handleCancelEdit = () => {
+        setIsEditing(false);
+    };
+
+    const handleToggleUserMode = () => {
+        setIsUserMode(!isUserMode);
+        setSelectedComponent(null);
+        setIsEditing(false);
+    };
+
+    const handleUserModeSave = async () => {
+        await handleSave(false);
+    };
+
+    const handleUserModeExit = () => {
+        if (hasUnsavedChanges && !confirm('Discard unsaved changes?')) return;
+        setIsUserMode(false);
+        setSelectedComponent(null);
+    };
+
     // RENDER
     return (
         <div className="flex flex-col h-screen bg-gray-900 text-white font-sans">
 
-            {/* HEADER */}
-            <header className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-gray-800">
+            {/* USER MODE TOOLBAR OR NORMAL HEADER */}
+            {isUserMode ? (
+                <UserModeToolbar
+                    templateName={currentTemplateName}
+                    onSave={handleUserModeSave}
+                    onExit={handleUserModeExit}
+                    isSaving={isSaving}
+                    hasChanges={hasUnsavedChanges}
+                />
+            ) : (
+                <header className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-gray-800">
                 <div className="flex items-center gap-4">
                     <h1 className="text-lg font-bold text-white">MJML Builder</h1>
                     <span className="text-gray-400">|</span>
@@ -554,12 +763,24 @@ export default function EmailBuilder() {
                             )}
                         </select>
                     </div>
+
+                    {/* User Mode Toggle */}
+                    <button
+                        onClick={handleToggleUserMode}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded font-medium text-sm bg-blue-600 hover:bg-blue-500 text-white transition"
+                        title="Switch to user mode to edit template content"
+                    >
+                        <Eye size={16} />
+                        User Mode
+                    </button>
                 </div>
-            </header>
+                </header>
+            )}
 
             {/* MAIN CONTENT */}
             <div className="flex flex-1 overflow-hidden">
-                {/* LEFT SIDEBAR - Templates */}
+                {/* LEFT SIDEBAR - Templates (hidden in user mode) */}
+                {!isUserMode && (
                 <aside className="w-56 border-r border-gray-700 bg-gray-850 flex flex-col">
                     <div className="p-3 border-b border-gray-700">
                         <button
@@ -660,10 +881,12 @@ export default function EmailBuilder() {
                             Manage Brands
                         </a>
                     </div>
-                </aside >
+                </aside>
+                )}
 
-                {/* CENTER - Code Editor */}
-                < div className="flex-1 border-r border-gray-700" >
+                {/* CENTER - Code Editor (hidden in user mode) */}
+                {!isUserMode && (
+                <div className="flex-1 border-r border-gray-700">
                     <Editor
                         height="100%"
                         defaultLanguage="xml"
@@ -709,10 +932,11 @@ export default function EmailBuilder() {
                             automaticLayout: true
                         }}
                     />
-                </div >
+                </div>
+                )}
 
                 {/* RIGHT - Preview */}
-                < div className="flex-1 bg-gray-100 relative" >
+                <div className="flex-1 bg-gray-100 relative">
                     <div className="absolute top-2 left-2 bg-white/90 text-gray-600 text-xs px-2 py-1 rounded shadow z-10">
                         Preview
                     </div>
@@ -739,14 +963,36 @@ export default function EmailBuilder() {
                         className="w-full h-full border-none"
                         sandbox="allow-scripts"
                     />
-                </div >
-            </div >
+                </div>
+            </div>
+
+            {/* User Mode - Floating Toolbar */}
+            {isUserMode && selectedComponent && !isEditing && (
+                <FloatingToolbar
+                    selectedComponent={selectedComponent}
+                    bounds={selectedComponentBounds}
+                    onEdit={handleEditComponent}
+                    onDuplicate={handleDuplicateComponent}
+                    onDelete={handleDeleteComponent}
+                />
+            )}
+
+            {/* User Mode - Inline Text Editor */}
+            {isUserMode && isEditing && selectedComponent && (
+                <InlineTextEditor
+                    selectedComponent={selectedComponent}
+                    initialContent={selectedComponent.content}
+                    bounds={selectedComponentBounds}
+                    onSave={handleSaveContent}
+                    onCancel={handleCancelEdit}
+                />
+            )}
 
             <Toast
                 message={toast.message}
                 type={toast.type}
                 onDismiss={() => setToast({ message: '', type: 'info' })}
             />
-        </div >
+        </div>
     );
 }

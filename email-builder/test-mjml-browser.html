@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MJML Browser Test</title>
+    <script src="https://unpkg.com/mjml-browser"></script>
+</head>
+<body>
+    <h1>Testing mj-html-attributes with mjml-browser</h1>
+    <button onclick="testMjml()">Test MJML Compilation</button>
+    <pre id="output"></pre>
+
+    <script>
+        function testMjml() {
+            const testMjml = `
+<mjml>
+  <mj-head>
+    <mj-html-attributes>
+      <mj-selector path=".test-class">
+        <mj-html-attribute name="data-editable">true</mj-html-attribute>
+        <mj-html-attribute name="data-editable-id">test-1</mj-html-attribute>
+      </mj-selector>
+    </mj-html-attributes>
+  </mj-head>
+  <mj-body>
+    <mj-section>
+      <mj-column>
+        <mj-text mj-class="test-class">Test Content</mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>
+            `;
+
+            try {
+                const { html, errors } = mjml2html(testMjml, { validationLevel: 'soft' });
+
+                const output = document.getElementById('output');
+                output.textContent = 'Errors: ' + JSON.stringify(errors, null, 2) + '\n\n';
+
+                const hasDataEditable = html.includes('data-editable');
+                output.textContent += 'Contains data-editable: ' + hasDataEditable + '\n\n';
+
+                if (hasDataEditable) {
+                    const match = html.match(/data-editable[^>]*>/);
+                    output.textContent += 'Sample: ' + match[0] + '\n\n';
+                } else {
+                    output.textContent += 'Searching for "Test Content" in HTML:\n';
+                    const match = html.match(/<[^>]*>Test Content<\/[^>]*>/);
+                    if (match) {
+                        output.textContent += match[0] + '\n\n';
+                    }
+                }
+
+                output.textContent += 'Full HTML:\n' + html;
+            } catch (e) {
+                document.getElementById('output').textContent = 'Error: ' + e.message;
+            }
+        }
+    </script>
+</body>
+</html>
