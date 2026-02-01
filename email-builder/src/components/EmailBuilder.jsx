@@ -22,6 +22,11 @@ import FloatingToolbar from './FloatingToolbar';
 import InlineTextEditor from './InlineTextEditor';
 import { parseEditableComponents } from '../lib/editableComponentParser';
 import { updateEditableContent, duplicateComponent, deleteComponent } from '../lib/mjmlContentUpdater';
+import {
+    extractEditableMappings,
+    injectEditableAttributes,
+    ensureEditableClassesInMjml
+} from '../lib/injectEditableAttributes';
 
 // PRESET BRANDS
 const PRESET_BRANDS = {
@@ -205,17 +210,7 @@ export default function EmailBuilder() {
     // Parse editable components from compiled HTML (for user mode)
     useEffect(() => {
         if (isUserMode && preview) {
-            // Debug: Check if data-editable attributes exist in HTML
-            const hasDataEditable = preview.includes('data-editable');
-            console.log('Preview HTML contains data-editable:', hasDataEditable);
-            if (hasDataEditable) {
-                // Show a sample of where it appears
-                const match = preview.match(/data-editable[^>]*>/);
-                if (match) console.log('Sample:', match[0]);
-            }
-
             const components = parseEditableComponents(preview);
-            console.log('Found editable components:', components);
             setEditableComponents(components);
         } else if (isUserMode && !preview) {
             setEditableComponents([]);
@@ -352,7 +347,17 @@ export default function EmailBuilder() {
           `;
             }
 
-            const { html, errors } = mjml2html(finalMjml, { validationLevel: 'soft' });
+            // Ensure mj-class="editable-X" produces class="editable-X" in output (mjml-browser requirement)
+            const mjmlToCompile = isUserMode ? ensureEditableClassesInMjml(finalMjml) : finalMjml;
+
+            const { html: rawHtml, errors } = mjml2html(mjmlToCompile, { validationLevel: 'soft' });
+            let html = rawHtml;
+
+            // Workaround: mjml-browser doesn't support mj-html-attributes, so inject data-editable manually
+            if (isUserMode) {
+                const mappings = extractEditableMappings(finalMjml);
+                html = injectEditableAttributes(html, mappings);
+            }
 
             // Inject click scripts based on mode
             let injectionScript = '';

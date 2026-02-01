@@ -81,8 +81,8 @@ export function updateEditableContent(mjmlCode, editableId, newContent, validati
             };
         }
 
-        // Find the element by data-editable-id
-        const element = doc.querySelector(`[data-editable-id="${editableId}"]`);
+        // Find the element by mj-class (MJML uses mj-class, not data-editable-id)
+        const element = doc.querySelector(`[mj-class="editable-${editableId}"]`);
 
         if (!element) {
             const errorMsg = `Component with ID "${editableId}" not found`;
@@ -154,8 +154,8 @@ export function duplicateComponent(mjmlCode, editableId) {
             };
         }
 
-        // Find the original element
-        const original = doc.querySelector(`[data-editable-id="${editableId}"]`);
+        // Find the original element by mj-class (MJML uses mj-class, not data-editable-id)
+        const original = doc.querySelector(`[mj-class="editable-${editableId}"]`);
 
         if (!original) {
             const errorMsg = `Component with ID "${editableId}" not found`;
@@ -171,11 +171,11 @@ export function duplicateComponent(mjmlCode, editableId) {
         // Clone the element deeply
         const clone = original.cloneNode(true);
 
-        // Generate new unique ID
+        // Generate new unique ID and set mj-class so the clone is recognized as editable
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 5);
         const newId = `${editableId}-copy-${timestamp}-${random}`;
-        clone.setAttribute('data-editable-id', newId);
+        clone.setAttribute('mj-class', `editable-${newId}`);
 
         // Insert after original
         if (original.nextSibling) {
@@ -238,8 +238,8 @@ export function deleteComponent(mjmlCode, editableId) {
             };
         }
 
-        // Find the element
-        const element = doc.querySelector(`[data-editable-id="${editableId}"]`);
+        // Find the element by mj-class (MJML uses mj-class, not data-editable-id)
+        const element = doc.querySelector(`[mj-class="editable-${editableId}"]`);
 
         if (!element) {
             const errorMsg = `Component with ID "${editableId}" not found`;

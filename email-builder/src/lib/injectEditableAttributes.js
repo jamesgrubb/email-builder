@@ -4,7 +4,41 @@
  * This is a workaround for mjml-browser not supporting mj-html-attributes.
  * It finds elements in MJML with specific mj-class values and adds corresponding
  * data-editable attributes to the compiled HTML.
+ *
+ * mj-class requires definitions in mj-attributes to output CSS classes. This helper
+ * injects css-class into mj-attributes so mj-class="editable-X" produces class="editable-X".
  */
+
+/**
+ * Injects mj-class definitions so mj-class="editable-X" outputs class="editable-X" in HTML.
+ * MJML requires mj-class to be defined in mj-attributes; without it, no class is output.
+ * @param {string} mjmlSource - Full MJML document
+ * @returns {string} MJML with mj-class definitions added to mj-attributes
+ */
+export function ensureEditableClassesInMjml(mjmlSource) {
+    const mappings = extractEditableMappings(mjmlSource);
+    if (mappings.length === 0) return mjmlSource;
+
+    const uniqueClasses = [...new Set(mappings.map((m) => m.className))];
+    const mjClassDefinitions = uniqueClasses
+        .map((cls) => `<mj-class name="${cls}" css-class="${cls}" />`)
+        .join('\n        ');
+
+    // Inject into mj-attributes (after opening tag, or create mj-attributes if missing)
+    if (mjmlSource.includes('<mj-attributes>')) {
+        return mjmlSource.replace(
+            '<mj-attributes>',
+            `<mj-attributes>\n        ${mjClassDefinitions}`
+        );
+    }
+    if (mjmlSource.includes('<mj-head>')) {
+        return mjmlSource.replace(
+            '<mj-head>',
+            `<mj-head>\n    <mj-attributes>\n        ${mjClassDefinitions}\n    </mj-attributes>`
+        );
+    }
+    return mjmlSource;
+}
 
 /**
  * Extracts editable component mappings from MJML source
@@ -69,15 +103,23 @@ export function injectEditableAttributes(compiledHtml, mappings) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(compiledHtml, 'text/html');
 
-        mappings.forEach(({ className, editableId, content }) => {
+        mappings.forEach(({ className, editableId, content, tagName }) => {
             // Find elements in HTML with this class
             const elements = doc.querySelectorAll(`.${className}`);
 
             elements.forEach((element) => {
-                // Match by content to ensure we get the right element
-                if (element.textContent?.trim() === content) {
+                // Match by content when possible; MJML outputs nested tables so textContent may include extra whitespace
+                const elText = element.textContent?.trim().replace(/\s+/g, ' ');
+                const contentNorm = content.trim().replace(/\s+/g, ' ');
+                const contentMatches = elText === contentNorm || elText.includes(contentNorm);
+
+                if (contentMatches || elements.length === 1) {
                     element.setAttribute('data-editable', 'true');
                     element.setAttribute('data-editable-id', editableId);
+                    element.setAttribute(
+                        'data-editable-type',
+                        tagName === 'mj-button' ? 'button' : 'text'
+                    );
                 }
             });
         });
